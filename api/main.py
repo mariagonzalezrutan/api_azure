@@ -2,25 +2,20 @@ from fastapi import FastAPI, Header, HTTPException
 from azure.devops.connection import Connection
 from msrest.authentication import BasicAuthentication
 from azure.devops.v7_0.work_item_tracking.models import Wiql, JsonPatchOperation
-import os
 
 app = FastAPI()
 
-# Configura la caché de Azure DevOps para un entorno de solo lectura
-os.environ["AZURE_DEVOPS_CACHE_DIR"] = "/tmp"
-
 @app.post("/")
-async def ejecutar_script_azure(authorization: str = Header(...)):
+def ejecutar_script_azure(authorization: str = Header(...)):
     try:
-        # Verificar y extraer el token
         print(f"Authorization header recibido: {authorization}")
         if authorization.startswith("Bearer "):
             personal_access_token = authorization.split(" ")[1]  # Quita "Bearer"
         else:
             personal_access_token = authorization
-
+       
         organization_url = 'https://dev.azure.com/CorporacionRutaN'
-
+        
         # Autenticación y conexión
         credentials = BasicAuthentication('', personal_access_token)
         connection = Connection(base_url=organization_url, creds=credentials)
@@ -28,17 +23,12 @@ async def ejecutar_script_azure(authorization: str = Header(...)):
         core_client = connection.clients.get_core_client()
         wit_client = connection.clients.get_work_item_tracking_client()
 
-        # Obtener proyectos
         projects = core_client.get_projects()
         for project in projects:
             if project.name == "CATI":
                 print(f"Proyecto: {project.name}")
 
-                # Consulta de work items
-                query = Wiql(query=(
-                    f"SELECT [System.Id], [System.Title], [System.State] "
-                    f"FROM workitems WHERE [System.TeamProject] = '{project.name}'"
-                ))
+                query = Wiql(query=f"SELECT [System.Id], [System.Title], [System.State] FROM workitems WHERE [System.TeamProject] = '{project.name}'")
                 work_items_query_result = wit_client.query_by_wiql(wiql=query)
                 
                 if not work_items_query_result.work_items:
@@ -57,24 +47,25 @@ async def ejecutar_script_azure(authorization: str = Header(...)):
 
                         if cantidad is not None and meses is not None and valor_unitario is not None:
                             valor_total_estimado = cantidad * meses * valor_unitario
-                            print(f"Calculando Valor Total Estimado: {valor_total_estimado}")
+                            valor_total_formateado = valor_total_estimado
+                            print(f"    Calculando Valor Total Estimado: {valor_total_formateado}")
                             try:
                                 update_document = [
                                     JsonPatchOperation(
                                         op="add",
                                         path="/fields/Custom.ValorTotal",
-                                        value=valor_total_estimado
+                                        value=valor_total_formateado
                                     )
                                 ]
                                 wit_client.update_work_item(
                                     document=update_document,
                                     id=wi.id
                                 )
-                                print(f"Valor Total Estimado actualizado en el work item ID {wi.id}: {valor_total_estimado}")
+                                print(f" Valor Total Estimado actualizado en el work item ID {wi.id}: {valor_total_formateado}")
                             except Exception as e:
-                                print(f"Error al actualizar el work item ID {wi.id}: {e}")
+                                print(f"    Error al actualizar el work item ID {wi.id}: {e}")
                         else:
-                            print(f"No se encontraron suficientes datos para calcular el valor total estimado para el work item ID {wi.id}")
+                            print(f" No se encontraron suficientes datos para calcular el valor total estimado para el work item ID {wi.id}")
 
                         print("====================================")
                 else:
@@ -84,4 +75,4 @@ async def ejecutar_script_azure(authorization: str = Header(...)):
         return {"message": "Script ejecutado correctamente"}
     except Exception as e:
         print(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error ejecutando el script: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
