@@ -2,11 +2,49 @@ from fastapi import FastAPI, Header, HTTPException
 from azure.devops.connection import Connection
 from msrest.authentication import BasicAuthentication
 from azure.devops.v7_0.work_item_tracking.models import Wiql, JsonPatchOperation
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
 
 app = FastAPI()
 
+# Define el modelo para el payload recibido
+class Message(BaseModel):
+    text: str
+    html: Optional[str]
+    markdown: Optional[str]
+
+class Definition(BaseModel):
+    id: int
+    name: str
+    url: str
+    type: str
+
+class Resource(BaseModel):
+    id: int
+    buildNumber: str
+    status: str
+    result: str
+    queueTime: str
+    startTime: str
+    finishTime: str
+    url: str
+    definition: Definition
+    sourceBranch: str
+    sourceVersion: str
+    logs: Dict[str, Any]
+
+class AzurePayload(BaseModel):
+    subscriptionId: str
+    notificationId: int
+    id: str
+    eventType: str
+    publisherId: str
+    message: Message
+    resource: Resource
+    createdDate: str
+
 @app.post("/")
-def ejecutar_script_azure(authorization: str = Header(...)):
+def ejecutar_script_azure(payload: AzurePayload, authorization: str = Header(...)):
     try:
         print(f"Authorization header recibido: {authorization}")
         if authorization.startswith("Bearer "):
@@ -23,6 +61,16 @@ def ejecutar_script_azure(authorization: str = Header(...)):
         core_client = connection.clients.get_core_client()
         wit_client = connection.clients.get_work_item_tracking_client()
 
+        # Procesar información del payload
+        print(f"Procesando evento: {payload.eventType}")
+        print(f"Build ID: {payload.resource.id}, Status: {payload.resource.status}")
+
+        if payload.resource.status == "completed" and payload.resource.result == "succeeded":
+            print(f"El build {payload.resource.buildNumber} fue exitoso.")
+        else:
+            print(f"El build {payload.resource.buildNumber} no fue exitoso.")
+
+        # Consulta proyectos en Azure DevOps
         projects = core_client.get_projects()
         for project in projects:
             if project.name == "CATI":
@@ -72,7 +120,7 @@ def ejecutar_script_azure(authorization: str = Header(...)):
                     print(f"No se encontraron work items para el proyecto: {project.name}")
 
                 print("====================================")
-        return {"message": "Script ejecutado correctamente"}
+        return {"message": "Evento procesado y script ejecutado correctamente"}
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
