@@ -43,7 +43,6 @@ class AzurePayload(BaseModel):
 
 @app.post("/")
 def ejecutar_script_azure(payload: Optional[AzurePayload] = None, authorization: str = Header(...)):
-    
     try:
         # Procesar el token de autorización
         print(f"Authorization header recibido: {authorization}")
@@ -61,36 +60,35 @@ def ejecutar_script_azure(payload: Optional[AzurePayload] = None, authorization:
         core_client = connection.clients.get_core_client()
         wit_client = connection.clients.get_work_item_tracking_client()
 
-        # Si hay un payload, procesar solo el Work Item especificado
+        # Procesar Work Item específico del payload (si lo hay)
         if payload:
             work_item_id = payload.resource.workItemId
-            if work_item_id == 0:
-                print("El Work Item ID en el payload es inválido (ID 0). Ignorando este evento.")
-                return {"message": "Work Item ID inválido. Evento ignorado."}
-
-            print(f"Procesando evento para el Work Item ID: {work_item_id}")
-            try:
-                work_item = wit_client.get_work_item(id=work_item_id, expand='All')
-                procesar_work_item(wit_client, work_item)
-            except Exception as e:
-                print(f"Error al obtener o procesar el Work Item ID {work_item_id}: {e}")
-        else:
-            # Procesar todos los proyectos si no hay un payload
-            print("Iterando sobre todos los proyectos y Work Items")
-            projects = core_client.get_projects()
-            for project in projects:
-                query = Wiql(query=f"SELECT [System.Id], [System.Title], [System.State] FROM workitems WHERE [System.TeamProject] = '{project.name}'")
-                work_items_query_result = wit_client.query_by_wiql(wiql=query)
-                
-                if not work_items_query_result.work_items:
-                    # Solo imprime si es necesario depurar
-                    print(f"No se encontraron Work Items para el proyecto: {project.name}")
-                    continue
-                
-                work_item_ids = [item.id for item in work_items_query_result.work_items]
-                work_items = wit_client.get_work_items(ids=work_item_ids, expand='All')
-                for work_item in work_items:
+            if work_item_id != 0:  # Ignorar IDs inválidos
+                print(f"Procesando evento para el Work Item ID: {work_item_id}")
+                try:
+                    work_item = wit_client.get_work_item(id=work_item_id, expand='All')
                     procesar_work_item(wit_client, work_item)
+                except Exception as e:
+                    print(f"Error al obtener o procesar el Work Item ID {work_item_id}: {e}")
+            else:
+                print("El Work Item ID en el payload es inválido (ID 0). Ignorando este evento.")
+
+        # Procesar todos los Work Items de todos los proyectos
+        print("Iterando sobre todos los proyectos y Work Items")
+        projects = core_client.get_projects()
+        for project in projects:
+            query = Wiql(query=f"SELECT [System.Id], [System.Title], [System.State] FROM workitems WHERE [System.TeamProject] = '{project.name}'")
+            work_items_query_result = wit_client.query_by_wiql(wiql=query)
+            
+            if not work_items_query_result.work_items:
+                # Solo imprime si es necesario depurar
+                print(f"No se encontraron Work Items para el proyecto: {project.name}")
+                continue
+            
+            work_item_ids = [item.id for item in work_items_query_result.work_items]
+            work_items = wit_client.get_work_items(ids=work_item_ids, expand='All')
+            for work_item in work_items:
+                procesar_work_item(wit_client, work_item)
 
         return {"message": "Script ejecutado correctamente"}
     except Exception as e:
