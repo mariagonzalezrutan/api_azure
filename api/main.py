@@ -43,6 +43,7 @@ class AzurePayload(BaseModel):
 
 @app.post("/")
 def ejecutar_script_azure(payload: Optional[AzurePayload] = None, authorization: str = Header(...)):
+    
     try:
         # Procesar el token de autorización
         print(f"Authorization header recibido: {authorization}")
@@ -59,29 +60,20 @@ def ejecutar_script_azure(payload: Optional[AzurePayload] = None, authorization:
 
         core_client = connection.clients.get_core_client()
         wit_client = connection.clients.get_work_item_tracking_client()
-        projects = core_client.get_projects()
-        for project in projects:
-            query = Wiql(query=f"SELECT [System.Id], [System.Title], [System.State] FROM workitems WHERE [System.TeamProject] = '{project.name}'")
-            work_items_query_result = wit_client.query_by_wiql(wiql=query)
-            
-            if not work_items_query_result.work_items:
-                print(f"No se encontraron Work Items para el proyecto: {project.name}")
-                continue
-            
-            work_item_ids = [item.id for item in work_items_query_result.work_items]
-            work_items = wit_client.get_work_items(ids=work_item_ids, expand='All')
-            for work_item in work_items:
-                procesar_work_item(wit_client, work_item)
 
         # Si hay un payload, procesar solo el Work Item especificado
         if payload:
             work_item_id = payload.resource.workItemId
-            print(f"Procesando evento para el Work Item ID: {work_item_id}")
+            if work_item_id == 0:
+                print("El Work Item ID en el payload es inválido (ID 0). Ignorando este evento.")
+                return {"message": "Work Item ID inválido. Evento ignorado."}
 
-            # Obtener detalles del Work Item
-            work_item = wit_client.get_work_item(id=work_item_id, expand='All')
-            procesar_work_item(wit_client, work_item)
-            
+            print(f"Procesando evento para el Work Item ID: {work_item_id}")
+            try:
+                work_item = wit_client.get_work_item(id=work_item_id, expand='All')
+                procesar_work_item(wit_client, work_item)
+            except Exception as e:
+                print(f"Error al obtener o procesar el Work Item ID {work_item_id}: {e}")
         else:
             # Procesar todos los proyectos si no hay un payload
             print("Iterando sobre todos los proyectos y Work Items")
@@ -91,6 +83,7 @@ def ejecutar_script_azure(payload: Optional[AzurePayload] = None, authorization:
                 work_items_query_result = wit_client.query_by_wiql(wiql=query)
                 
                 if not work_items_query_result.work_items:
+                    # Solo imprime si es necesario depurar
                     print(f"No se encontraron Work Items para el proyecto: {project.name}")
                     continue
                 
@@ -113,6 +106,14 @@ def procesar_work_item(wit_client, work_item):
         cantidad = work_item.fields.get('Custom.Cantidad')
         meses = work_item.fields.get('Custom.Meses')
         valor_unitario = work_item.fields.get('Custom.Valorunitario')
+
+        # Validar que todos los valores necesarios estén presentes
+        if cantidad is None:
+            print(f"Falta el campo 'Custom.Cantidad' en el Work Item ID {work_item.id}")
+        if meses is None:
+            print(f"Falta el campo 'Custom.Meses' en el Work Item ID {work_item.id}")
+        if valor_unitario is None:
+            print(f"Falta el campo 'Custom.Valorunitario' en el Work Item ID {work_item.id}")
 
         if cantidad is not None and meses is not None and valor_unitario is not None:
             valor_total_estimado = cantidad * meses * valor_unitario
