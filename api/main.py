@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 
 app = FastAPI()
 
-# Define el modelo para el payload recibido
+# Modelo del Payload de Azure
 class Message(BaseModel):
     text: str
     html: Optional[str]
@@ -40,42 +40,76 @@ class AzurePayload(BaseModel):
     resource: Resource
     createdDate: str
 
+
 @app.post("/")
-def ejecutar_script_azure(payload: AzurePayload, authorization: str = Header(...)):
+def ejecutar_script_azure(payload: Optional[AzurePayload] = None, authorization: str = Header(...)):
     try:
-        # Extraer y procesar el token de autorización
+        # Procesar el token de autorización
         print(f"Authorization header recibido: {authorization}")
         if authorization.startswith("Bearer "):
             personal_access_token = authorization.split(" ")[1]  # Quita "Bearer"
         else:
             personal_access_token = authorization
-       
+
         organization_url = 'https://dev.azure.com/CorporacionRutaN'
-        
+
         # Autenticación y conexión
         credentials = BasicAuthentication('', personal_access_token)
         connection = Connection(base_url=organization_url, creds=credentials)
 
         core_client = connection.clients.get_core_client()
         wit_client = connection.clients.get_work_item_tracking_client()
+        projects = core_client.get_projects()
+        for project in projects:
+            query = Wiql(query=f"SELECT [System.Id], [System.Title], [System.State] FROM workitems WHERE [System.TeamProject] = '{project.name}'")
+            work_items_query_result = wit_client.query_by_wiql(wiql=query)
+            
+            if not work_items_query_result.work_items:
+                print(f"No se encontraron Work Items para el proyecto: {project.name}")
+                continue
+            
+            work_item_ids = [item.id for item in work_items_query_result.work_items]
+            work_items = wit_client.get_work_items(ids=work_item_ids, expand='All')
+            for work_item in work_items:
+                procesar_work_item(wit_client, work_item)
 
-        # Procesar información del payload
-        print(f"Procesando evento: {payload.eventType}")
-        work_item_id = payload.resource.workItemId
-        updated_fields = payload.resource.fields
+        # Si hay un payload, procesar solo el Work Item especificado
+        if payload:
+            work_item_id = payload.resource.workItemId
+            print(f"Procesando evento para el Work Item ID: {work_item_id}")
 
-        if updated_fields:
-            print(f"Work item actualizado: {work_item_id}, Campos modificados:")
-            for field, update in updated_fields.items():
-                print(f"  Campo: {field}, Viejo valor: {update.oldValue}, Nuevo valor: {update.newValue}")
+            # Obtener detalles del Work Item
+            work_item = wit_client.get_work_item(id=work_item_id, expand='All')
+            procesar_work_item(wit_client, work_item)
+            
         else:
-            print(f"No se detectaron campos actualizados en el work item ID {work_item_id}")
+            # Procesar todos los proyectos si no hay un payload
+            print("Iterando sobre todos los proyectos y Work Items")
+            projects = core_client.get_projects()
+            for project in projects:
+                query = Wiql(query=f"SELECT [System.Id], [System.Title], [System.State] FROM workitems WHERE [System.TeamProject] = '{project.name}'")
+                work_items_query_result = wit_client.query_by_wiql(wiql=query)
+                
+                if not work_items_query_result.work_items:
+                    print(f"No se encontraron Work Items para el proyecto: {project.name}")
+                    continue
+                
+                work_item_ids = [item.id for item in work_items_query_result.work_items]
+                work_items = wit_client.get_work_items(ids=work_item_ids, expand='All')
+                for work_item in work_items:
+                    procesar_work_item(wit_client, work_item)
 
-        # Obtener detalles del work item actualizado
-        work_item = wit_client.get_work_item(id=work_item_id, expand='All')
-        print(f"Detalles del work item: {work_item.fields}")
+        return {"message": "Script ejecutado correctamente"}
+    except Exception as e:
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-        # Procesar cualquier campo del work item actualizado
+
+def procesar_work_item(wit_client, work_item):
+    """
+    Procesa un Work Item específico, calculando y actualizando el valor total estimado.
+    """
+    try:
         cantidad = work_item.fields.get('Custom.Cantidad')
         meses = work_item.fields.get('Custom.Meses')
         valor_unitario = work_item.fields.get('Custom.Valorunitario')
@@ -91,14 +125,12 @@ def ejecutar_script_azure(payload: AzurePayload, authorization: str = Header(...
                         value=valor_total_estimado
                     )
                 ]
-                wit_client.update_work_item(document=update_document, id=work_item_id)
-                print(f"Valor Total Estimado actualizado en el work item ID {work_item_id}: {valor_total_estimado}")
+                wit_client.update_work_item(document=update_document, id=work_item.id)
+                print(f"Valor Total Estimado actualizado en el Work Item ID {work_item.id}: {valor_total_estimado}")
             except Exception as e:
-                print(f"Error al actualizar el work item ID {work_item_id}: {e}")
+                print(f"Error al actualizar el Work Item ID {work_item.id}: {e}")
         else:
-            print(f"No se encontraron suficientes datos para calcular el valor total estimado para el work item ID {work_item_id}")
+            print(f"No se encontraron suficientes datos para calcular el valor total estimado para el Work Item ID {work_item.id}")
 
-        return {"message": "Evento procesado y script ejecutado correctamente"}
     except Exception as e:
-        print(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error procesando el Work Item ID {work_item.id}: {e}")
