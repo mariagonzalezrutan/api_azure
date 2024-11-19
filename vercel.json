@@ -10,6 +10,13 @@
         "src": "/(.*)",
         "dest": "api/main.py"
       }
-    ]
+    ],
+    "redirects": [
+        {
+          "source": "/(.*)",
+          "destination": "https://api-azure.vercel.app/$1",
+          "permanent": true
+        }
+      ]
   }
   
